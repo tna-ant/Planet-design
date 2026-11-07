@@ -388,13 +388,37 @@ stack.addEventListener("click",e=>{const c=e.target.closest(".card");if(c&&wide.
   function armGesture(){if(armed)return;armed=true;
     function off(){EV.forEach(t=>removeEventListener(t,go,true));armed=false}
     function go(e){if(e.target&&e.target.closest&&e.target.closest("#nMusic"))return; // the ♪ button has its own handler
-      if(!wantOn||!au.paused){off();return}
+      if(!wantOn||!au.paused||vidOn()){off();return}
       au.play().then(()=>{paint();off()},()=>{}) /* blocked: try again on the next gesture */}
     EV.forEach(t=>addEventListener(t,go,true))}
   btn.addEventListener("click",e=>{e.stopPropagation();
-    if(au.paused){wantOn=true;play().catch(()=>{})}else{wantOn=false;au.pause();paint()}
+    if(au.paused){wantOn=true;au._allow=true;play().catch(()=>{})}else{wantOn=false;au._ducked=false;au.pause();paint()}
     try{localStorage.setItem("hs-music",sig+"|"+(wantOn?"on":"off"))}catch(_){}});
-  document.addEventListener("visibilitychange",()=>{if(document.hidden){if(!au.paused){au.pause();au._resume=true}}else if(au._resume&&wantOn){au._resume=false;play().catch(()=>{})}});
+  // Music steps aside while any video plays, and while the page is in the background / being left (phones fire pagehide or
+  // visibilitychange when you switch app or tab). It comes back by itself afterwards if the visitor had it on.
+  // Belt and braces for phones: events can be missed, so the rule is also enforced (a) whenever the music tries to start and
+  // (b) by a short timer.
+  const vidOn=()=>[...document.querySelectorAll("video")].some(v=>!v.paused&&!v.ended);
+  const away=()=>document.hidden||leftPage;
+  const quiet=()=>away()||vidOn();                       // music must be silent now
+  let leftPage=false;
+  const duck=()=>{if(!au.paused){au.pause();au._ducked=true}};
+  const unduck=()=>{if(wantOn&&au.paused&&!quiet()){au._ducked=false;play().catch(()=>{})}};
+  const vidEv=(e)=>e.target&&e.target.tagName==="VIDEO";
+  ["play","playing"].forEach(t=>document.addEventListener(t,e=>{if(vidEv(e)){au._allow=false;duck()}},true));
+  ["pause","ended","emptied","abort"].forEach(t=>document.addEventListener(t,e=>{if(vidEv(e))setTimeout(unduck,80)},true));
+  function leave(){leftPage=true;duck();document.querySelectorAll("video").forEach(v=>{if(!v.paused)v.pause()})}
+  function back(){leftPage=false;setTimeout(unduck,80)}
+  document.addEventListener("visibilitychange",()=>{document.hidden?leave():back()});
+  document.addEventListener("webkitvisibilitychange",()=>{document.hidden?leave():back()});
+  addEventListener("pagehide",leave);addEventListener("pageshow",back);addEventListener("freeze",leave);addEventListener("resume",back);
+  if(matchMedia("(pointer:coarse)").matches){addEventListener("blur",()=>{leftPage=true;duck()});addEventListener("focus",back);
+    // safety: any touch on the visible page means the visitor is here, so a stray "blur" can never leave the music stuck off
+    ["pointerdown","touchstart"].forEach(t=>addEventListener(t,()=>{if(leftPage&&!document.hidden)back()},true))}
+  // whatever starts the music (autoplay retry, a tap, ...) while a video plays or the page is left is stopped again,
+  // unless the visitor pressed the ♪ button on purpose
+  au.addEventListener("play",()=>{if(quiet()&&!au._allow)au.pause()});
+  setInterval(()=>{if(quiet()&&!au.paused&&!au._allow){au.pause();au._ducked=true}else if(au._ducked&&au.paused)unduck()},400);
   au.addEventListener("pause",paint);au.addEventListener("play",paint);
   const _al=applyLang;applyLang=function(){_al();paint()};
   paint();
